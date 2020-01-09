@@ -1,0 +1,115 @@
+package com.menu.app.utils
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.ContextWrapper
+import android.util.Log
+import com.menu.app.utils.Constants.MAX_LOG_DAYS
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
+import repository.LogRepository
+import java.io.*
+import java.text.DateFormat
+import java.text.SimpleDateFormat
+import java.util.*
+import java.util.concurrent.TimeUnit
+import kotlin.math.abs
+
+
+class Logger(var base: Context?, val logrepository: LogRepository) : ContextWrapper(base) {
+
+    private val LOGSTASH_FILE_PREFIX = "/logstash/"
+
+    private val filePath = getCurrentDate() + ".txt"
+    private val directionPath = cacheDir.toString() + LOGSTASH_FILE_PREFIX
+
+
+    fun log(log: String) {
+        writeToFile(message = log, filePath = filePath)
+    }
+
+    private fun createFile(fileName: String): Boolean {
+        File(directionPath).mkdirs()
+        return try {
+            File(directionPath + fileName).createNewFile()
+        } catch (e: IOException) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    @SuppressLint("LogNotTimber")
+    private fun writeToFile(message: String, filePath: String) {
+        if (isFileExist(filePath)) {
+            try {
+                FileWriter(directionPath + filePath, true).use { fw ->
+                    BufferedWriter(fw).use { bw -> PrintWriter(bw).use { out -> out.println(getCurrentDateTime() + message) } }
+                }
+            } catch (e: IOException) {
+                Log.d("Tag", "couldn't write log:$e")
+            }
+        } else {
+            val isFileCreated = createFile(filePath)
+            if (isFileCreated) {
+                writeToFile(message, filePath)
+            }
+        }
+    }
+
+    private fun getCurrentDateTime() : String {
+        val dateFormat: DateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+        val date = Date()
+        return dateFormat.format(date)
+    }
+
+
+    private fun isFileExist(filePath: String): Boolean {
+        val file = File(directionPath + filePath)
+        return file.exists()
+    }
+
+
+    fun deleteOldFile() {
+        val allFiles = getAllFiles()
+        allFiles?.let {
+            for (file in allFiles) {
+                val date = file.name
+                if (getDaysBetweenTwoDays(getCurrentDate(), date.split(".txt")[0]) == MAX_LOG_DAYS) {
+                    file.delete()
+                }
+            }
+        }
+    }
+
+    private fun getAllFiles(): Array<File>? {
+        val directory = File(directionPath)
+        return directory.listFiles()
+    }
+
+
+    fun sendLogToServer() {
+        val file = File(directionPath + filePath)
+        val filePart: MultipartBody.Part = MultipartBody.Part.createFormData("file", file.name,
+                RequestBody.create("text/plain".toMediaTypeOrNull(), file))
+        if (file.exists()) {
+            logrepository.upload(filePart)
+        }
+    }
+
+    private fun getDaysBetweenTwoDays(currentDate: String, fileNameDate: String): Int {
+        val sdf = SimpleDateFormat("dd-MM-yyyy", Locale.ENGLISH)
+        val firstDate: Date = sdf.parse(currentDate)
+        val secondDate: Date = sdf.parse(fileNameDate)
+        val diffInMillies = abs(secondDate.time - firstDate.time)
+        return TimeUnit.DAYS.convert(diffInMillies, TimeUnit.MILLISECONDS).toInt()
+    }
+
+    private fun getCurrentDate(): String {
+        val cal = Calendar.getInstance()
+        val date = cal.time
+        val dateFormat: DateFormat = SimpleDateFormat("dd-MM-yyyy")
+        return dateFormat.format(date)
+    }
+
+}
